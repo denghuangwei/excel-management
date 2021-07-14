@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Excel merge</title>
+  <style>
+    .button-wrapper {
+      position: relative;
+      overflow: hidden;
+      display: inline-block;
+      margin-right: 50px;
+    }
+
+    .btn {
+      display: inline-block;
+      border: 2px solid gray;
+      color: gray;
+      background-color: white;
+      padding: 8px 20px;
+      border-radius: 8px;
+      font-size: 20px;
+      font-weight: bold;
+    }
+
+    .button-wrapper input[type=file] {
+      font-size: 100px;
+      position: absolute;
+      left: 0;
+      top: 0;
+      opacity: 0;
+    }
+
+    #list {
+      border-top: 2px solid gray;
+      border-bottom: 2px solid gray;
+      color: gray;
+      font-size: 20px;
+      padding: 20px;
+      width: 500px;
+    }
+
+    #list li {
+      padding: 8px;
+      margin-left: 20px;
+    }
+
+    li:nth-child(even) {
+      color: gray;
+    }
+
+    li:nth-child(odd) {
+      color: brown;
+    }
+
+    .excel-list-title {
+      margin: 20px 0;
+      color: gray;
+      font-size: 20px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="row">
+    <div class="button-wrapper">
+      <input type="file" multiple id="file-upload" name="file-upload">
+      <label class="btn" for="file-upload">Upload Excels</label>
+    </div>
+
+    <div class="button-wrapper">
+      <input type="button" value="Merge and Export" class="btn" id="merge-excel">
+    </div>
+
+    <div class="button-wrapper">
+      <input type="button" value="Clear" class="btn" id="clear-excel">
+    </div>
+  </div>
+  <div class="excel-list-title">Imported Excels: </div>
+  <ol id="list"></ol>
+  <!-- <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script> -->
+  <script src="./js/xlsx.full.min.js"></script>
+  <script>
+    let loading = false;
+    const sheetName = 'Daily Report';
+    const fields = [
+      { field: 'Update approach', format: 'string' },
+      { field: 'Date', format: 'date' },
+      { field: 'Owner', format: 'string' },
+      { field: 'Country', format: 'string' },
+      { field: 'Fusion Incident#', format: 'string' },
+      { field: 'Status', format: 'string' },
+      { field: 'Call Driver', format: 'string' },
+      { field: 'Within Scope', format: 'string' },
+      { field: 'Action', format: 'string' },
+      { field: 'Order', format: 'number' },
+      { field: 'ISR', format: 'string' },
+      { field: 'Customer Name', format: 'string' }
+    ];
+    const fileNameCheck = /.*\.(xlsx|xlsb)$/;
+    const cellNoCheck = /^[A-Z]+1$/;
+    const mergeExcelEle = document.getElementById('merge-excel');
+    const fileUploadEle = document.getElementById('file-upload');
+    const clearEle = document.getElementById('clear-excel');
+    let files = [];
+    renderList();
+    function wrapLoading(cb, moduleName) {
+      return async function () {
+        if (loading) {
+          customAlert('loading...');
+          return;
+        }
+        loading = true
+        document.getElementById(moduleName).setAttribute('disabled', '');
+        try {
+          await new Promise((resolve) => {
+            setTimeout(() => {
+              resolve()
+            }, 100);
+          });
+          await cb(...arguments);
+        } catch (error) {
+          files = [];
+          customAlert(error)
+        } finally {
+          loading = false;
+          setTimeout(() => {
+            document.getElementById(moduleName).removeAttribute('disabled');
+          }, 200);
+          renderList();
+        }
+      }
+    }
+
+    fileUploadEle.addEventListener('change', wrapLoading(async e => {
+      const uploadFiles = [...fileUploadEle.files];
+      if (uploadFiles.length < 1) {
+        return;
+      }
+
+      for (const file of uploadFiles) {
+        if (!fileNameCheck.test(file.name)) {
+          customAlert(`[${file.name}] is not an excel file!`)
+          return;
+        }
+
+        if (files.some(item => item.name === file.name)) {
+          customAlert(`[${file.name}] already uploaded!`);
+          return;
+        }
+      }
+
+      for (const file of uploadFiles) {
+        const data = await readExcel(file);
+
+        files.push({
+          name: file.name,
+          data,
+        });
+      }
+
+      e.target.value = ''
+      customAlert('Uploade excels success!')
+    }, 'file-upload'));
+
+    clearEle.addEventListener('click', wrapLoading(e => {
+      files = [];
+      renderList();
+    }, 'clear-excel'));
+
+    mergeExcelEle.addEventListener('click', wrapLoading((e) => {
+      if (files.length < 1) {
+        customAlert('Please upload the excel files!');
+        return;
+      }
+
+      /* create a new blank workbook */
+      var workbook = XLSX.utils.book_new();
+
+      const dataList = [];
+      for (const item of files) {
+        dataList.push(...item.data);
+      }
+
+      const sheetData = XLSX.utils.json_to_sheet(dataList);
+      XLSX.utils.book_append_sheet(workbook, sheetData, sheetName);
+      const now = new Date();
+      const fileName = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}.merge.xlsx`;
+      XLSX.writeFile(workbook, fileName);
+      files = [];
+      renderList();
+    }, 'merge-excel'));
+
+    function customAlert(msg) {
+      setTimeout(() => {
+        alert(msg);
+      }, 200);
+    }
+    function readExcel(file) {
+      return new Promise((resolve, reject) => {
+        var reader = new FileReader();
+        reader.onload = function (re) {
+          var data = re.target.result;
+          var workbook = XLSX.read(data, {
+            type: 'binary'
+          });
+
+          // const sheetNames = Object.keys(workbook.Sheets);
+          const choosedSheetName = workbook.SheetNames.find(item => item.toLowerCase() === sheetName.toLowerCase()) || workbook.SheetNames[0];
+          if (!choosedSheetName) {
+            reject(`Do not exist sheet name [Daily Report] for [${file.name}]!`);
+          }
+
+          const sheet = workbook.Sheets[choosedSheetName];
+          const fieldNos = Object.keys(sheet);
+          const titleNos = fieldNos.filter(no => cellNoCheck.test(no));
+          const titles = titleNos.map(no => sheet[no].v);
+          const missingField = fields.find(fieldItem => !titles.some(title => title.trim().toLowerCase() === fieldItem.field.toLowerCase()));
+          if (missingField) {
+            reject(`Do not exist column [${missingField.field}] for [${file.name}]`);
+          }
+
+          const list = XLSX.utils.sheet_to_json(sheet, { raw: false });
+          const result = [];
+          for (const item of list) {
+            const itemResult = {};
+
+            for (const title of titles) {
+              const fieldItem = fields.find(fieldItem => fieldItem.field.toLowerCase() === title.trim().toLowerCase())
+              if (fieldItem) {
+                itemResult[fieldItem.field] = item[title];
+              }
+            }
+
+            const date = new Date(itemResult['Date']).toDateString();
+            const todayStr = new Date().toDateString()
+            if (date === todayStr) {
+              result.push(itemResult);
+            }
+          }
+
+          resolve(result);
+        }
+
+        reader.onerror = function (ex) {
+          reject(ex);
+        };
+
+        reader.readAsBinaryString(file);
+      })
+    }
+
+    function renderList() {
+      const listEle = document.getElementById('list');
+      setTimeout(() => {
+        if (files.length > 0) {
+          listEle.innerHTML = files.map(file => `<li>${file.name}</li>`).join('\n');
+        } else {
+          listEle.innerHTML = 'None'
+        }
+      })
+    }
+  </script>
+</body>
+
+</html>
