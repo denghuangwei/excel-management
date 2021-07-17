@@ -7,11 +7,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Excel merge</title>
   <style>
+    .row {
+      margin: 20px;
+      ;
+    }
+
     .button-wrapper {
-      position: relative;
-      overflow: hidden;
       display: inline-block;
       margin-right: 50px;
+      width: 250px;
+      text-align: center;
+      cursor: pointer;
     }
 
     .btn {
@@ -23,14 +29,19 @@
       border-radius: 8px;
       font-size: 20px;
       font-weight: bold;
+      width: 100%;
     }
 
     .button-wrapper input[type=file] {
-      font-size: 100px;
-      position: absolute;
-      left: 0;
-      top: 0;
-      opacity: 0;
+      display: none;
+    }
+
+    #merge-excel {
+      width: 294px;
+    }
+
+    #clear-excel {
+      width: 294px;
     }
 
     #list {
@@ -39,7 +50,7 @@
       color: gray;
       font-size: 20px;
       padding: 20px;
-      width: 500px;
+      width: 1000px;
     }
 
     #list li {
@@ -55,10 +66,36 @@
       color: brown;
     }
 
+    .choosed-length {
+      margin-left: 50px;
+      float: right;
+    }
+
     .excel-list-title {
       margin: 20px 0;
       color: gray;
       font-size: 20px;
+    }
+
+    .loading {
+      position: fixed;
+      z-index: 90;
+      top: 0;
+      left: 0;
+      width: 100%;
+      background: rgba(0, 0, 0, 0.5);
+    }
+
+    .loading-text {
+      margin: 30% auto;
+      text-align: center;
+      display: none;
+    }
+
+    .loading .loading-text {
+      display: block;
+      font-size: x-large;
+      color: burlywood;
     }
   </style>
 </head>
@@ -69,19 +106,36 @@
       <input type="file" multiple id="file-upload" name="file-upload">
       <label class="btn" for="file-upload">Upload Excels</label>
     </div>
-
+  </div>
+  <div class="row">
     <div class="button-wrapper">
-      <input type="button" value="Merge and Export" class="btn" id="merge-excel">
+      <input type="date" class="btn" value="Merge and Export" id="start-date">
     </div>
-
     <div class="button-wrapper">
-      <input type="button" value="Clear" class="btn" id="clear-excel">
+      <input type="date" class="btn" value="Merge and Export" id="end-date">
     </div>
   </div>
-  <div class="excel-list-title">Imported Excels: </div>
-  <ol id="list"></ol>
-  <!-- <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script> -->
-  <script src="./js/xlsx.full.min.js"></script>
+  <div class="row">
+    <div class="button-wrapper">
+      <input type="button" class="btn" value="Merge and Export" id="merge-excel">
+    </div>
+
+    <div class="button-wrapper">
+      <input type="button" class="btn" value="Clear" id="clear-excel">
+    </div>
+  </div>
+  <div class="row">
+    <div class="excel-list-title">Imported Excels: </div>
+    <ol id="list"></ol>
+  </div>
+  <div id="loading">
+    <div class="loading-text">
+      Processing ...
+    </div>
+  </div>
+  <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+  <!-- <script src="./js/xlsx.full.min.js"></script> -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js"></script>
   <script>
     let loading = false;
     const sheetName = 'Daily Report';
@@ -104,16 +158,26 @@
     const mergeExcelEle = document.getElementById('merge-excel');
     const fileUploadEle = document.getElementById('file-upload');
     const clearEle = document.getElementById('clear-excel');
+    const now = moment();
+    const today = now.format('YYYY-MM-DD');
+    let startDate = today;
+    let endDate = today;
+    const startDateEle = document.getElementById('start-date');
+    const endDateEle = document.getElementById('end-date');
+    startDateEle.value = startDate;
+    endDateEle.value = endDate;
     let files = [];
     renderList();
-    function wrapLoading(cb, moduleName) {
+    const loadingEle = document.getElementById('loading')
+    function wrapLoading(cb, ele) {
       return async function () {
         if (loading) {
           customAlert('loading...');
           return;
         }
         loading = true
-        document.getElementById(moduleName).setAttribute('disabled', '');
+        ele.setAttribute('disabled', '');
+        loadingEle.classList.add('loading');
         try {
           await new Promise((resolve) => {
             setTimeout(() => {
@@ -122,18 +186,30 @@
           });
           await cb(...arguments);
         } catch (error) {
-          files = [];
           customAlert(error)
         } finally {
           loading = false;
           setTimeout(() => {
-            document.getElementById(moduleName).removeAttribute('disabled');
+            loadingEle.classList.remove('loading');
+            ele.removeAttribute('disabled');
           }, 200);
           renderList();
         }
       }
     }
 
+    startDateEle.addEventListener('change', wrapLoading(e => {
+      startDate = e.target.value;
+      for (const file of files) {
+        file.choosed_length = file.data.filter(item => isInDateRange(item.Date)).length;
+      }
+    }, startDateEle));
+    endDateEle.addEventListener('change', wrapLoading(e => {
+      endDate = e.target.value;
+      for (const file of files) {
+        file.choosed_length = file.data.filter(item => isInDateRange(item.Date)).length;
+      }
+    }, endDateEle));
     fileUploadEle.addEventListener('change', wrapLoading(async e => {
       const uploadFiles = [...fileUploadEle.files];
       if (uploadFiles.length < 1) {
@@ -152,23 +228,32 @@
         }
       }
 
+      e.target.value = ''
+
+      await transferToData(uploadFiles)
+    }, fileUploadEle));
+
+    async function transferToData(uploadFiles) {
+      const tempFiles = [];
       for (const file of uploadFiles) {
         const data = await readExcel(file);
 
-        files.push({
+        tempFiles.push({
           name: file.name,
           data,
+          choosed_length: data.filter(item => isInDateRange(item.Date)).length
         });
       }
 
-      e.target.value = ''
+      files.push(...tempFiles);
+
       customAlert('Uploade excels success!')
-    }, 'file-upload'));
+    }
 
     clearEle.addEventListener('click', wrapLoading(e => {
       files = [];
       renderList();
-    }, 'clear-excel'));
+    }, clearEle));
 
     mergeExcelEle.addEventListener('click', wrapLoading((e) => {
       if (files.length < 1) {
@@ -177,21 +262,20 @@
       }
 
       /* create a new blank workbook */
-      var workbook = XLSX.utils.book_new();
+      const workbook = XLSX.utils.book_new();
 
       const dataList = [];
       for (const item of files) {
-        dataList.push(...item.data);
+        dataList.push(...item.data.filter(cell => isInDateRange(cell.Date)));
       }
 
       const sheetData = XLSX.utils.json_to_sheet(dataList);
       XLSX.utils.book_append_sheet(workbook, sheetData, sheetName);
       const now = new Date();
-      const fileName = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}.merge.xlsx`;
+      const fileName = `${startDate}~${endDate}.merge.xlsx`;
       XLSX.writeFile(workbook, fileName);
-      files = [];
       renderList();
-    }, 'merge-excel'));
+    }, mergeExcelEle));
 
     function customAlert(msg) {
       setTimeout(() => {
@@ -200,49 +284,45 @@
     }
     function readExcel(file) {
       return new Promise((resolve, reject) => {
-        var reader = new FileReader();
-        reader.onload = function (re) {
-          var data = re.target.result;
-          var workbook = XLSX.read(data, {
-            type: 'binary'
-          });
-
-          // const sheetNames = Object.keys(workbook.Sheets);
-          const choosedSheetName = workbook.SheetNames.find(item => item.toLowerCase() === sheetName.toLowerCase()) || workbook.SheetNames[0];
-          if (!choosedSheetName) {
-            reject(`Do not exist sheet name [Daily Report] for [${file.name}]!`);
-          }
-
-          const sheet = workbook.Sheets[choosedSheetName];
-          const fieldNos = Object.keys(sheet);
-          const titleNos = fieldNos.filter(no => cellNoCheck.test(no));
-          const titles = titleNos.map(no => sheet[no].v);
-          const missingField = fields.find(fieldItem => !titles.some(title => title.trim().toLowerCase() === fieldItem.field.toLowerCase()));
-          if (missingField) {
-            reject(`Do not exist column [${missingField.field}] for [${file.name}]`);
-          }
-
-          const list = XLSX.utils.sheet_to_json(sheet, { raw: false });
-          const result = [];
-          for (const item of list) {
-            const itemResult = {};
-
-            for (const title of titles) {
-              const fieldItem = fields.find(fieldItem => fieldItem.field.toLowerCase() === title.trim().toLowerCase())
-              if (fieldItem) {
-                itemResult[fieldItem.field] = item[title];
-              }
+        const reader = new FileReader();
+        setTimeout(() => {
+          reader.onload = function (re) {
+            const data = re.target.result;
+            const workbook = XLSX.read(data, {
+              type: 'binary'
+            });
+            const choosedSheetName = workbook.SheetNames.find(item => item.toLowerCase() === sheetName.toLowerCase()) || workbook.SheetNames[0];
+            if (!choosedSheetName) {
+              reject(`Do not exist sheet name [Daily Report] for [${file.name}]!`);
             }
 
-            const date = new Date(itemResult['Date']).toDateString();
-            const todayStr = new Date().toDateString()
-            if (date === todayStr) {
+            const sheet = workbook.Sheets[choosedSheetName];
+            const fieldNos = Object.keys(sheet);
+            const titleNos = fieldNos.filter(no => cellNoCheck.test(no));
+            const titles = titleNos.map(no => sheet[no].v);
+            const missingField = fields.find(fieldItem => !titles.some(title => title.trim().toLowerCase() === fieldItem.field.toLowerCase()));
+            if (missingField) {
+              reject(`Do not exist column [${missingField.field}] for [${file.name}]`);
+            }
+
+            const list = XLSX.utils.sheet_to_json(sheet, { raw: false });
+            const result = [];
+            for (const item of list) {
+              const itemResult = {};
+
+              for (const title of titles) {
+                const fieldItem = fields.find(fieldItem => fieldItem.field.toLowerCase() === title.trim().toLowerCase())
+                if (fieldItem) {
+                  itemResult[fieldItem.field] = item[title];
+                }
+              }
+
               result.push(itemResult);
             }
-          }
 
-          resolve(result);
-        }
+            resolve(result);
+          }
+        })
 
         reader.onerror = function (ex) {
           reject(ex);
@@ -256,11 +336,27 @@
       const listEle = document.getElementById('list');
       setTimeout(() => {
         if (files.length > 0) {
-          listEle.innerHTML = files.map(file => `<li>${file.name}</li>`).join('\n');
+          listEle.innerHTML = files.map(file => `<li>${file.name}<span class="choosed-length">Choosed count: ${file.choosed_length}</span></li>`).join('\n');
         } else {
           listEle.innerHTML = 'None'
         }
       })
+    }
+
+    function isInDateRange(date) {
+      if (!date) {
+        return false;
+      }
+
+      const itemDateUnix = moment(date.trim()).unix();
+      if (Number.isNaN(itemDateUnix)) {
+        return false;
+      }
+
+      const startMomentUnix = moment(startDate).unix();
+      const endMomentUnix = moment(endDate).unix();
+      const inRange = startMomentUnix <= itemDateUnix && endMomentUnix >= itemDateUnix;
+      return inRange;
     }
   </script>
 </body>
